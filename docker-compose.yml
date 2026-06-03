@@ -1,0 +1,98 @@
+# 服务定义
+services:
+  # Redis 服务：用作消息队列和状态存储
+  redis:
+    image: redis:7-alpine
+    container_name: route_lead_ai_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # FastAPI 应用服务
+  app:
+    build: .
+    container_name: route_lead_ai_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # DeepSeek LLM 配置
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_API_BASE=${DEEPSEEK_API_BASE}
+      - LLM_MODEL=${LLM_MODEL}
+      # Resend 邮件服务
+      - RESEND_API_KEY=${RESEND_API_KEY}
+      - EMAIL_FROM=${EMAIL_FROM}
+      - TEST_EMAIL=${TEST_EMAIL}
+      # 企业微信 Webhook
+      - WECHAT_WEBHOOK_URL=${WECHAT_WEBHOOK_URL}
+      # 钉钉 Webhook
+      - DINGTALK_WEBHOOK_URL=${DINGTALK_WEBHOOK_URL}
+      # Redis 连接配置
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  # Worker 服务：处理 Redis 队列任务
+  worker:
+    build: .
+    container_name: route_lead_ai_worker
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    environment:
+      # DeepSeek LLM 配置
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_API_BASE=${DEEPSEEK_API_BASE}
+      - LLM_MODEL=${LLM_MODEL}
+      # Resend 邮件服务
+      - RESEND_API_KEY=${RESEND_API_KEY}
+      - EMAIL_FROM=${EMAIL_FROM}
+      - TEST_EMAIL=${TEST_EMAIL}
+      # 企业微信 Webhook
+      - WECHAT_WEBHOOK_URL=${WECHAT_WEBHOOK_URL}
+      # 钉钉 Webhook
+      - DINGTALK_WEBHOOK_URL=${DINGTALK_WEBHOOK_URL}
+      # Redis 连接配置
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      - redis
+      - app
+    volumes:
+      - .:/app
+    command: ["python", "-m", "app.worker"]
+
+  # 前端服务：Vue 3 + Vite 构建，Nginx 提供静态文件
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: route_lead_ai_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - app
+    environment:
+      # 前端可通过环境变量配置 API 地址（如需要）
+      - VITE_API_URL=http://app:8000
+
+# 数据卷定义
+volumes:
+  redis-data:
