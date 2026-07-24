@@ -31,10 +31,8 @@ class WeWorkService:
         if mentioned_user:
             payload["text"]["mentioned_list"] = [mentioned_user]
         try:
-            print(f"[WeWork] Sending to URL: {self.webhook_url[:50]}...")
-            print(f"[WeWork] Payload: {payload}")
+            logger.debug(f"Sending to webhook, payload: {payload}")
             resp = requests.post(self.webhook_url, json=payload, timeout=5)
-            print(f"[WeWork] Response status: {resp.status_code}, body: {resp.text}")
             if resp.status_code == 200:
                 logger.info(f'企业微信消息发送成功: {content[:30]}...')
                 return {"success": True, "status_code": 200, "message": '发送成功'}

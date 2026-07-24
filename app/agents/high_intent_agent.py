@@ -1,87 +1,13 @@
+import logging
 import os
 from typing import Dict, Any, Optional
 import json
-from langchain_community.chat_models import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
+
+logger = logging.getLogger(__name__)
 from app.models.lead import Lead, LeadStatus
 from app.config import Settings
-
-
-def _get_llm_for_agent(provider: Optional[str] = None):
-    """为高意向Agent获取LLM实例，不使用Google模型"""
-    settings = Settings()
-    provider = provider or os.getenv("LLM_PROVIDER", settings.llm_provider or "openai").lower()
-
-    if provider == "anthropic":
-        api_key = settings.anthropic_api_key or os.getenv("ANTHROPIC_API_KEY", "")
-        model_name = settings.anthropic_model or os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
-        api_base = settings.anthropic_api_base or os.getenv("ANTHROPIC_API_BASE", "")
-        if not api_key:
-            raise ValueError("未找到 ANTHROPIC_API_KEY")
-        return ChatAnthropic(
-            model=model_name,
-            anthropic_api_key=api_key,
-            anthropic_api_url=api_base if api_base else None,
-            temperature=0.3,
-            max_tokens=800
-        )
-
-    elif provider == "qwen":
-        api_key = settings.dashscope_api_key or os.getenv("DASHSCOPE_API_KEY", "")
-        if not api_key:
-            raise ValueError("未找到 DASHSCOPE_API_KEY")
-        model_name = settings.qwen_model or os.getenv("QWEN_MODEL", "qwen-turbo")
-        api_base = settings.qwen_api_base or os.getenv("QWEN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        return ChatOpenAI(
-            model=model_name,
-            openai_api_key=api_key,
-            openai_api_base=api_base,
-            temperature=0.3,
-            max_tokens=800
-        )
-
-    elif provider == "deepseek":
-        api_key = settings.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY", "")
-        if not api_key:
-            raise ValueError("未找到 DEEPSEEK_API_KEY")
-        model_name = settings.deepseek_model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-        api_base = settings.deepseek_api_base or os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
-        return ChatOpenAI(
-            model=model_name,
-            openai_api_key=api_key,
-            openai_api_base=api_base,
-            temperature=0.3,
-            max_tokens=800
-        )
-
-    elif provider == "custom":
-        api_key = settings.custom_api_key or os.getenv("CUSTOM_API_KEY", "")
-        model_name = settings.custom_model or os.getenv("CUSTOM_MODEL", "default")
-        api_base = settings.custom_api_base or os.getenv("CUSTOM_API_BASE", "")
-        if not api_base:
-            raise ValueError("未找到 CUSTOM_API_BASE")
-        return ChatOpenAI(
-            model=model_name,
-            openai_api_key=api_key or os.getenv("OPENAI_API_KEY", ""),
-            openai_api_base=api_base,
-            temperature=0.3,
-            max_tokens=800
-        )
-
-    else:  # openai default
-        api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY", "")
-        if not api_key:
-            raise ValueError("未找到 OPENAI_API_KEY")
-        model_name = settings.openai_model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        api_base = settings.openai_api_base or os.getenv("OPENAI_API_BASE", "")
-        return ChatOpenAI(
-            model=model_name,
-            openai_api_key=api_key,
-            openai_api_base=api_base if api_base else None,
-            temperature=0.3,
-            max_tokens=800
-        )
+from app.llm_utils import get_llm
 
 
 class HighIntentAgent:
@@ -91,12 +17,12 @@ class HighIntentAgent:
         self.provider = provider or os.getenv("LLM_PROVIDER", None)
         self.settings = Settings()
         self.provider = self.provider or self.settings.llm_provider or "openai"
-        self.llm = _get_llm_for_agent(self.provider)
+        self.llm = get_llm(self.provider, temperature=0.3, max_tokens=800)
 
     def set_provider(self, provider: str):
         """运行时切换模型"""
         self.provider = provider.lower()
-        self.llm = _get_llm_for_agent(self.provider)
+        self.llm = get_llm(self.provider, temperature=0.3, max_tokens=800)
 
     async def process(self, lead: Lead) -> Dict[str, Any]:
         """
@@ -118,8 +44,7 @@ class HighIntentAgent:
             "status": "ready_to_send"
         }
 
-        print(f"[HighIntentAgent] 处理线索 {lead.id}，意向分: {lead.intent_score}")
-        print(f"[HighIntentAgent] 生成消息: {message[:100]}...")
+        logger.info(f"[HighIntentAgent] 处理线索 {lead.id}，意向分: {lead.intent_score}")
 
         return result
 

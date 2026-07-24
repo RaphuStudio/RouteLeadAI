@@ -1,10 +1,14 @@
 import requests
 import logging
 import json
+import mistune
 
 from app.config import settings
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
+
+# mistune Markdown 渲染器
+_md = mistune.create_markdown()
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +59,7 @@ class EmailService:
                 "from": f"{self.from_name} <{self.from_email}>" if self.from_name else f"AI Sales Outreach <{self.from_email}>",
                 "to": [to_email],
                 "subject": subject,
-                "html": content.replace('\n', '<br>')  # Simple HTML conversion
+                "html": _md(content)  # Markdown → HTML
             }
 
             headers = {
@@ -63,12 +67,9 @@ class EmailService:
                 "Content-Type": "application/json"
             }
 
-            print(f"[Email] Sending to URL: {self.api_url}")
-            print(f"[Email] To: {to_email}")
-            print(f"[Email] Subject: {subject}")
-            print(f"[Email] Payload: {payload}")
+            logger.debug(f"To: {to_email}, Subject: {subject}")
             response = requests.post(self.api_url, json=payload, headers=headers)
-            print(f"[Email] Response status: {response.status_code}, body: {response.text[:200]}...")
+            logger.info(f"Email response: status={response.status_code}, to={to_email}")
 
             if response.status_code == 200:
                 logger.info(f"邮件发送成功: {to_email}")

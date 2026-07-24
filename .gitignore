@@ -24,3 +24,17 @@ frontend/.vite/
 
 # OS
 .DS_Store
+
+# 环境变量
+.env
+
+# Claude 本地配置
+.claude/settings.local.json
+
+# Vite 缓存（根级）
+.vite/
+PRD.md
+docs/
+*.png
+*.log
+dump.rdb

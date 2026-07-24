@@ -69,10 +69,8 @@ class DingTalkService:
             payload["at"]["isAtAll"] = at_all
 
         try:
-            print(f"[DingTalk] Sending to URL: {url[:50]}...")
-            print(f"[DingTalk] Payload: {payload}")
+            logger.debug(f"Sending to dingtalk, payload: {payload}")
             resp = requests.post(url, json=payload, timeout=5)
-            print(f"[DingTalk] Response status: {resp.status_code}, body: {resp.text}")
             if resp.status_code == 200:
                 body = resp.json()
                 err = body.get('errcode')

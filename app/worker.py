@@ -20,13 +20,7 @@ from app.models.lead import Lead
 from app.services.lead_service import get_stats
 from app.services.dingtalk_service import DingTalkService
 from app.services.wework_service import WeWorkService
-
-# 自定义 Formatter：输出 ISO 8601 格式带时区（CST +08:00）
-class ISO8601Formatter(logging.Formatter):
-    def formatTime(self, record, datefmt=None):
-        # 系统时间已是 CST（UTC+8），直接格式化并添加 +08:00
-        dt = datetime.fromtimestamp(record.created, tz=timezone(timedelta(hours=8)))
-        return dt.strftime('%Y-%m-%dT%H:%M:%S+08:00')
+from app.log_utils import ISO8601Formatter
 
 logger = logging.getLogger(__name__)
 handler = logging.StreamHandler()
@@ -59,13 +53,13 @@ async def process_lead_task(task_data: dict):
     if agent_name == "high_intent_agent":
         trigger = OutreachAgent()
         # Execute outreach synchronously (it's not async in our current impl)
-        trigger.execute(lead.dict())
+        trigger.execute(lead.model_dump())
         lead.assigned_agent = "high_intent_agent"
         lead.status = "contacted"
     elif agent_name == "normal_nurture_agent":
         trigger = NurtureAgent()
         # Execute nurturing campaign
-        trigger.execute(lead.dict())
+        trigger.execute(lead.model_dump())
         lead.assigned_agent = "normal_nurture_agent"
         lead.status = "nurturing"
     elif agent_name == "longtail_nurture_agent":
@@ -129,14 +123,14 @@ async def check_consistency() -> dict:
         if real_total != api_stats["total"]:
             issues.append(f"总数不一致：Redis={real_total}, API={api_stats['total']}")
         
-        if real_by_score["high"] != api_stats["by_intent"]["high (80+)"]:
-            issues.append(f"高意向计数不一致：Redis={real_by_score['high']}, API={api_stats['by_intent']['high (80+)']}")
-        
-        if real_by_score["medium"] != api_stats["by_intent"]["medium (50-79)"]:
-            issues.append(f"中意向计数不一致：Redis={real_by_score['medium']}, API={api_stats['by_intent']['medium (50-79)']}")
-        
-        if real_by_score["low"] != api_stats["by_intent"]["low (<50)"]:
-            issues.append(f"低意向计数不一致：Redis={real_by_score['low']}, API={api_stats['by_intent']['low (<50)']}")
+        if real_by_score["high"] != api_stats["by_intent"]["high (100+)"]:
+            issues.append(f"高意向计数不一致：Redis={real_by_score['high']}, API={api_stats['by_intent']['high (100+)']}")
+
+        if real_by_score["medium"] != api_stats["by_intent"]["medium (62-99)"]:
+            issues.append(f"中意向计数不一致：Redis={real_by_score['medium']}, API={api_stats['by_intent']['medium (62-99)']}")
+
+        if real_by_score["low"] != api_stats["by_intent"]["low (<62)"]:
+            issues.append(f"低意向计数不一致：Redis={real_by_score['low']}, API={api_stats['by_intent']['low (<62)']}")
         
         return {
             "success": len(issues) == 0,

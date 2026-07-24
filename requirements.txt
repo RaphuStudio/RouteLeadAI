@@ -13,6 +13,7 @@ requests==2.32.3
 
 # 数据模型与验证库
 pydantic==2.8.2
+pydantic-settings>=2.0.0
 
 # 从 .env 文件加载环境变量
 python-dotenv==1.0.0
@@ -29,3 +30,6 @@ openai>=1.55.0
 
 # Redis（任务队列）
 redis==5.2.0
+
+# Markdown 转 HTML（邮件渲染）
+mistune>=3.1.0

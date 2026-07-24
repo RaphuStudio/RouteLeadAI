@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -9,12 +10,7 @@ from datetime import datetime, timezone, timedelta
 
 from app.models.lead import Lead, LeadStatus, LeadSource
 from app.services.lead_service import process_lead, get_all_leads, get_lead_by_id, get_stats
-
-# 自定义 Formatter：输出 ISO 8601 格式带时区（CST +08:00）
-class ISO8601Formatter(logging.Formatter):
-    def formatTime(self, record, datefmt=None):
-        dt = datetime.fromtimestamp(record.created, tz=timezone(timedelta(hours=8)))
-        return dt.strftime('%Y-%m-%dT%H:%M:%S+08:00')
+from app.log_utils import ISO8601Formatter
 
 # 配置 logging
 logger = logging.getLogger("fastapi")
@@ -27,11 +23,13 @@ logger.propagate = False
 # FastAPI app instance
 app = FastAPI(title="RouteLeadAI - 识途线索AI", version="v2.0")
 
-# CORS middleware for cross-origin requests (frontend on different port)
+# CORS middleware for cross-origin requests
+# 开发环境允许所有来源；生产环境应替换为具体域名
+DEV_CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development; restrict in production
-    allow_credentials=True,
+    allow_origins=DEV_CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -39,7 +37,7 @@ app.add_middleware(
 # Pydantic model for incoming lead data
 class LeadIn(BaseModel):
     source: LeadSource
-    raw_content: Optional[str] = "需要重新询问客户需求"
+    raw_content: Optional[str] = None
     company_name: Optional[str] = None
     contact_name: Optional[str] = None
     position: Optional[str] = None

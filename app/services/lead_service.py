@@ -23,6 +23,11 @@ redis_client = redis.Redis(host=settings.redis_host, port=settings.redis_port, d
 classifier = LeadClassifier()
 router = LeadRouter()
 
+# 阈值常量（与 classifier.py 保持一致）
+HIGH_INTENT_THRESHOLD = 100   # >=100 高意向
+NURTURE_THRESHOLD_MIN = 62     # 62-99 培育
+
+
 async def process_lead(lead: Lead) -> Lead:
     """
     Process an incoming lead: classify, route, and push to appropriate queue.
@@ -43,10 +48,6 @@ async def process_lead(lead: Lead) -> Lead:
         lead.position = "未提供"
     if not lead.raw_content:
         lead.raw_content = "需要重新询问客户需求"
-    if not lead.email:
-        lead.email = "未提供"
-    if not lead.phone:
-        lead.phone = "未提供"
 
     # Save lead to Redis
     _save_lead(lead)
@@ -54,7 +55,7 @@ async def process_lead(lead: Lead) -> Lead:
     task = {
         "lead_id": lead.id,
         "agent": target_agent,
-        "payload": lead.dict()
+        "payload": lead.model_dump()
     }
     logger.info(f"[LeadService] Pushing task to Redis: {task}")
     # Use synchronous Redis call in thread pool to avoid blocking
@@ -128,10 +129,10 @@ def get_stats() -> dict:
         leads = get_all_leads()
         total = len(leads)
 
-        # Count by intent score range (满分125：100+=高意向，62-99=培育，<62=长尾）
-        high = sum(1 for l in leads if int(l.get("intent_score", 0)) >= 100)
-        medium = sum(1 for l in leads if 62 <= int(l.get("intent_score", 0)) < 100)
-        low = sum(1 for l in leads if int(l.get("intent_score", 0)) < 62)
+        # Count by intent score range（满分125：100+=高意向，62-99=培育，<62=长尾）
+        high = sum(1 for l in leads if int(l.get("intent_score", 0)) >= HIGH_INTENT_THRESHOLD)
+        medium = sum(1 for l in leads if NURTURE_THRESHOLD_MIN <= int(l.get("intent_score", 0)) < HIGH_INTENT_THRESHOLD)
+        low = sum(1 for l in leads if int(l.get("intent_score", 0)) < NURTURE_THRESHOLD_MIN)
 
         # Count by agent
         high_agent = sum(1 for l in leads if l.get("assigned_agent") == "high_intent_agent")
@@ -141,9 +142,9 @@ def get_stats() -> dict:
         return {
             "total": total,
             "by_intent": {
-                "high (80+)": high,
-                "medium (50-79)": medium,
-                "low (<50)": low,
+                "high (100+)": high,
+                "medium (62-99)": medium,
+                "low (<62)": low,
             },
             "by_agent": {
                 "high_intent_agent": high_agent,

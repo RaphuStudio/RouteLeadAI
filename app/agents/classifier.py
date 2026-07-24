@@ -1,92 +1,19 @@
 import json
+import logging
 import os
 from typing import Optional, Dict
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
+
+logger = logging.getLogger(__name__)
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.models.lead import Lead, LeadStatus
 from app.config import Settings
+from app.llm_utils import get_llm, parse_json_from_llm
 
-
-def _get_llm(provider: Optional[str] = None):
-    """根据 provider 动态创建 LLM 实例，所有配置均从环境变量通过 Settings 获取"""
-    settings = Settings()
-    provider = provider or os.getenv("LLM_PROVIDER", settings.llm_provider or "openai").lower()
-
-    # 从 Settings 中统一获取 API Key 和 Base URL
-    if provider == "anthropic":
-        api_key = settings.anthropic_api_key or os.getenv("ANTHROPIC_API_KEY", "")
-        model_name = settings.anthropic_model or os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
-        api_base = settings.anthropic_api_base or os.getenv("ANTHROPIC_API_BASE", "")
-        if not api_key:
-            raise ValueError("未在 .env 中配置 ANTHROPIC_API_KEY")
-        return ChatAnthropic(
-            model=model_name,
-            anthropic_api_key=api_key,
-            anthropic_api_url=api_base if api_base else None,
-            temperature=0.2,
-            max_tokens=512
-        )
-
-    elif provider == "qwen":
-        api_key = settings.dashscope_api_key or os.getenv("DASHSCOPE_API_KEY", "")
-        model_name = settings.qwen_model or os.getenv("QWEN_MODEL", "qwen-turbo")
-        api_base = settings.qwen_api_base or os.getenv("QWEN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        if not api_key:
-            raise ValueError("未在 .env 中配置 DASHSCOPE_API_KEY")
-        return ChatOpenAI(
-            model=model_name,
-            openai_api_key=api_key,
-            openai_api_base=api_base,
-            temperature=0.2,
-            max_tokens=512
-        )
-
-    elif provider == "deepseek":
-        api_key = settings.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY", "")
-        model_name = settings.deepseek_model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-        api_base = settings.deepseek_api_base or os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
-        if not api_key:
-            raise ValueError("未在 .env 中配置 DEEPSEEK_API_KEY")
-        return ChatOpenAI(
-            model=model_name,
-            openai_api_key=api_key,
-            openai_api_base=api_base,
-            temperature=0.2,
-            max_tokens=512
-        )
-
-    elif provider == "custom":
-        api_key = settings.custom_api_key or os.getenv("CUSTOM_API_KEY", "")
-        model_name = settings.custom_model or os.getenv("CUSTOM_MODEL", "default")
-        api_base = settings.custom_api_base or os.getenv("CUSTOM_API_BASE", "")
-        if not api_key:
-            raise ValueError("未在 .env 中配置 CUSTOM_API_KEY")
-        if not api_base:
-            raise ValueError("未在 .env 中配置 CUSTOM_API_BASE")
-        if not model_name:
-            model_name = "default"
-        return ChatOpenAI(
-            model=model_name,
-            openai_api_key=api_key,
-            openai_api_base=api_base,
-            temperature=0.2,
-            max_tokens=512
-        )
-
-    else:  # openai default
-        api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY", "")
-        model_name = settings.openai_model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        api_base = settings.openai_api_base or os.getenv("OPENAI_API_BASE", "")
-        if not api_key:
-            raise ValueError("未在 .env 中配置 OPENAI_API_KEY")
-        return ChatOpenAI(
-            model=model_name,
-            openai_api_key=api_key,
-            openai_api_base=api_base if api_base else None,
-            temperature=0.2,
-            max_tokens=512
-        )
+# 阈值常量
+HIGH_INTENT_THRESHOLD = 100  # >=100 高意向
+NURTURE_THRESHOLD_MIN = 62   # 62-99 培育
+# < 62 长尾
 
 
 class LeadClassifier:
@@ -96,12 +23,12 @@ class LeadClassifier:
         self.provider = provider or os.getenv("LLM_PROVIDER", None)
         self.settings = Settings()
         self.provider = self.provider or self.settings.llm_provider or "openai"
-        self.llm = _get_llm(self.provider)
+        self.llm = get_llm(self.provider)
 
     def set_provider(self, provider: str):
         """运行时切换模型"""
         self.provider = provider.lower()
-        self.llm = _get_llm(self.provider)
+        self.llm = get_llm(self.provider)
 
     async def classify(self, lead: Lead) -> Lead:
         """给出 BANT 评分并写回 Lead 对象"""
@@ -122,16 +49,19 @@ class LeadClassifier:
         ))
 
         resp = await self.llm.ainvoke([system_msg, human_msg])
-        scores: Dict = json.loads(resp.content)
+
+        # 容错解析 LLM 输出
+        scores = parse_json_from_llm(resp.content)
+        if scores is None:
+            logger.warning(f"LLM 返回非法 JSON，使用默认评分 0")
+            scores = {}
 
         # 更新 Lead
         lead.budget_score    = int(scores.get("budget", 0))
         lead.authority_score = int(scores.get("authority", 0))
         lead.need_score      = int(scores.get("need", 0))
         lead.timeline_score  = int(scores.get("timeline", 0))
-        # 获取 position 分数（0-25）
         position_score = int(scores.get("position", 0))
-        # 计算 intent_score：5个维度之和（0-125）
         lead.intent_score    = (
             int(scores.get("budget", 0)) +
             int(scores.get("authority", 0)) +
@@ -145,10 +75,10 @@ class LeadClassifier:
             lead.position = str(scores.get("position_title"))
 
         # 根据 intent_score 给状态打标（满分125：100+=高意向，62-99=培育，<62=长尾）
-        if lead.intent_score >= 100:
+        if lead.intent_score >= HIGH_INTENT_THRESHOLD:
             lead.status = LeadStatus.CONTACTED
             lead.assigned_agent = "high_intent_agent"
-        elif 62 <= lead.intent_score < 100:
+        elif lead.intent_score >= NURTURE_THRESHOLD_MIN:
             lead.status = LeadStatus.CONTACTED
             lead.assigned_agent = "normal_nurture_agent"
         else:
