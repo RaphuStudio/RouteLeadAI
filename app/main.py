@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
@@ -22,6 +22,7 @@ logger.propagate = False
 
 # FastAPI app instance
 app = FastAPI(title="RouteLeadAI - 识途线索AI", version="v2.0")
+api = APIRouter(prefix="/api")
 
 # CORS middleware for cross-origin requests
 # 开发环境允许所有来源；生产环境应替换为具体域名
@@ -44,16 +45,16 @@ class LeadIn(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
 
-@app.get("/")
+@api.get("/")
 async def root():
     return {"message": "Welcome to AI Sales Follow-up System"}
 
-@app.get("/health")
+@api.get("/health")
 async def health_check():
     return {"status": "healthy"}
 
 # Endpoint to receive leads
-@app.post("/leads")
+@api.post("/leads")
 async def receive_lead(lead_in: LeadIn):
     # Convert to Lead model
     lead = Lead(
@@ -75,7 +76,7 @@ async def receive_lead(lead_in: LeadIn):
         raise HTTPException(status_code=500, detail=f"Failed to process lead: {str(e)}")
 
 
-@app.get("/leads")
+@api.get("/leads")
 async def list_leads():
     """List all leads"""
     try:
@@ -85,7 +86,7 @@ async def list_leads():
         raise HTTPException(status_code=500, detail=f"Failed to list leads: {str(e)}")
 
 
-@app.get("/leads/{lead_id}")
+@api.get("/leads/{lead_id}")
 async def get_lead(lead_id: str):
     """Get single lead by ID"""
     try:
@@ -99,10 +100,12 @@ async def get_lead(lead_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to get lead: {str(e)}")
 
 
-@app.get("/stats")
+@api.get("/stats")
 async def stats():
     """Get lead statistics"""
     try:
         return await get_stats()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+app.include_router(api)
