@@ -4,7 +4,7 @@ import json
 import mistune
 
 from app.config import settings
-from langchain_openai import ChatOpenAI
+from app.llm_utils import get_llm
 from langchain_core.messages import HumanMessage, SystemMessage
 
 # mistune Markdown 渲染器
@@ -25,14 +25,8 @@ class EmailService:
         self.from_name = settings.email_from_name
         self.api_url = "https://api.resend.com/emails"
 
-        # 初始化 LLM（使用 DeepSeek，通过 OpenAI 兼容接口）
-        self.llm = ChatOpenAI(
-            model=settings.llm_model or "deepseek-v4-flash",
-            openai_api_key=settings.deepseek_api_key,
-            openai_api_base=settings.deepseek_api_base or "https://api.deepseek.com/v1",
-            temperature=0.2,
-            max_tokens=1024
-        )
+# 初始化 LLM（使用 get_llm 工厂函数，根据 LLM_PROVIDER 自动选择）
+        self.llm = get_llm(temperature=0.2, max_tokens=1024)
 
     def send_email(self, to_email: str, subject: str, content: str) -> dict:
         """

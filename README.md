@@ -378,3 +378,44 @@ MIT License
 ## 联系方式
 
 如有问题或建议，欢迎提交 Issue 或 Pull Request。
+
+## 腾讯云部署（2026-07-28）
+
+### 服务器信息
+- **公网 IP**：124.223.203.47
+- **域名**：`https://rout.lbai.tech`（复用 `lbai.online` SSL 证书）
+- **OS**：Ubuntu 24.04，4 核 / 3.6G 内存 / 40G 磁盘
+
+### 部署方式
+- **API 服务**：systemd 服务 `route-lead-app.service`，FastAPI + uvicorn，端口 8003
+- **Worker 服务**：systemd 服务 `route-lead-worker.service`，后台 Redis 队列消费
+- **前端**：Nginx 静态文件（`/var/www/route-lead/frontend/`），`/api` 代理到 `127.0.0.1:8003`
+- **Redis**：复用服务器已有 Redis 7（密码 `prelive_redis_2026`）
+- **LLM**：DeepSeek v4 Flash
+
+### 部署路径
+| 组件 | 路径 |
+|------|------|
+| 项目代码 | `/var/www/route-lead/` |
+| 虚拟环境 | `/var/www/route-lead/.venv/` |
+| Nginx 配置 | `/etc/nginx/sites-enabled/route-lead.conf` |
+| systemd 配置 | `/etc/systemd/system/route-lead-app.service` |
+| systemd 配置 | `/etc/systemd/system/route-lead-worker.service` |
+
+### 启动 / 维护命令
+```bash
+# 查看状态
+systemctl status route-lead-app.service
+systemctl status route-lead-worker.service
+
+# 查看日志
+journalctl -u route-lead-app.service -n 50 --no-pager
+journalctl -u route-lead-worker.service -n 50 --no-pager
+
+# 重启
+systemctl restart route-lead-app.service route-lead-worker.service
+```
+
+### 已知问题
+- **Redis 密码**：服务器 Redis 开启了密码认证，`config.py` 中 `Settings` 类缺 `redis_password` 字段，已手动添加并在所有 `redis.Redis()` 调用中传入 `password=settings.redis_password`
+- **Nginx 前端**：`try_files $uri $uri/ /index.html` 导致重定向循环，改为 `try_files /index.html =404;` 解决

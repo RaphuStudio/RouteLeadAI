@@ -31,5 +31,8 @@ openai>=1.55.0
 # Redis（任务队列）
 redis==5.2.0
 
+# PostgreSQL 异步驱动（线索数据持久化）
+asyncpg>=0.29.0
+
 # Markdown 转 HTML（邮件渲染）
 mistune>=3.1.0

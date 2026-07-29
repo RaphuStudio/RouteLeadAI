@@ -79,7 +79,7 @@ async def receive_lead(lead_in: LeadIn):
 async def list_leads():
     """List all leads"""
     try:
-        leads = get_all_leads()
+        leads = await get_all_leads()
         return {"total": len(leads), "leads": leads}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list leads: {str(e)}")
@@ -89,7 +89,7 @@ async def list_leads():
 async def get_lead(lead_id: str):
     """Get single lead by ID"""
     try:
-        lead = get_lead_by_id(lead_id)
+        lead = await get_lead_by_id(lead_id)
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
         return lead
@@ -103,6 +103,6 @@ async def get_lead(lead_id: str):
 async def stats():
     """Get lead statistics"""
     try:
-        return get_stats()
+        return await get_stats()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")

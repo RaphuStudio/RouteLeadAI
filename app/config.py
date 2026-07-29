@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_db: int = 0
+    redis_password: str = ""
 
     # LLM API Keys - 请在.env文件中填入实际值
     openai_api_key: str = ""
@@ -56,6 +57,13 @@ class Settings(BaseSettings):
 
     # CRM (optional)
     crm_api_key: str = ""
+
+    # PostgreSQL（线索数据持久化）
+    pg_host: str = "localhost"
+    pg_port: int = 5432
+    pg_database: str = "route_lead"
+    pg_user: str = "route_lead"
+    pg_password: str = ""
 
     class Config:
         env_file = ".env"

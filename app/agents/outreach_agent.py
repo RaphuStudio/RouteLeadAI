@@ -7,6 +7,7 @@ from app.services.wework_service import WeWorkService
 from app.services.dingtalk_service import DingTalkService
 from app.services.sms_service import SMSService
 from app.config import settings
+from app.llm_utils import get_llm
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +24,8 @@ class OutreachAgent:
         self.dingtalk_service = DingTalkService()
         self.sms_service = SMSService()
 
-        # 初始化 LLM（使用 DeepSeek，通过 OpenAI 兼容接口）
-        from langchain_openai import ChatOpenAI
-        self.llm = ChatOpenAI(
-            model=settings.llm_model or "deepseek-v4-flash",
-            openai_api_key=settings.deepseek_api_key,
-            openai_api_base=settings.deepseek_api_base or "https://api.deepseek.com/v1",
-            temperature=0.2,
-            max_tokens=512
-        )
+        # 初始化 LLM
+        self.llm = get_llm(temperature=0.2, max_tokens=512)
 
     def execute(self, lead: Dict) -> Dict:
         """

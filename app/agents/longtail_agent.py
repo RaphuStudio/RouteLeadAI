@@ -2,6 +2,7 @@ from typing import Dict
 import logging
 
 from app.config import settings
+from app.llm_utils import get_llm
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +20,8 @@ class LongTailNurtureAgent:
         self.enable_llm = settings.longtail_enable_llm or False
 
         if self.enable_llm:
-            from langchain_openai import ChatOpenAI
             from langchain_core.messages import HumanMessage, SystemMessage
-            self.llm = ChatOpenAI(
-                model=settings.llm_model or "deepseek-v4-flash",
-                openai_api_key=settings.deepseek_api_key,
-                openai_api_base=settings.deepseek_api_base or "https://api.deepseek.com/v1",
-                temperature=0.5,  # 更高温度，内容更丰富多样
-                max_tokens=512
-            )
+            self.llm = get_llm(temperature=0.5, max_tokens=512)
             self.SystemMessage = SystemMessage
             self.HumanMessage = HumanMessage
 

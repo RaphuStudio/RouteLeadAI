@@ -30,6 +30,13 @@
       :lead="detailLead"
       @close="showDetail = false"
     />
+
+    <!-- 备案 -->
+    <div style="text-align:center;padding:12px 0 24px;font-size:12px">
+      <a href="https://beian.mps.gov.cn/#/query/webSearch?code=33019202003154" rel="noreferrer" target="_blank" style="color:#999;text-decoration:none;display:inline-flex;align-items:center;gap:4px">
+        <img src="/beian-icon.png" style="width:16px;height:16px"> 浙公网安备33019202003154号
+      </a>
+    </div>
   </div>
 </template>
 

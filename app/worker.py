@@ -3,12 +3,14 @@ import json
 import sys
 import os
 import logging
+from typing import Optional
 from datetime import datetime, timezone, timedelta
 
 # Add the project root to the sys.path so that we can import from the 'app' package
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import redis
+import asyncpg
 
 from app.config import Settings
 from app.agents.classifier import LeadClassifier
@@ -31,7 +33,24 @@ logger.setLevel(logging.INFO)
 logger.propagate = False
 
 settings = Settings()
-redis_client = redis.Redis(host=settings.redis_host, port=settings.redis_port, db=settings.redis_db, decode_responses=True)
+redis_client = redis.Redis(host=settings.redis_host, port=settings.redis_port, db=settings.redis_db, password=settings.redis_password or None, decode_responses=True)
+
+# PostgreSQL 连接池
+_pool: Optional[asyncpg.Pool] = None
+
+async def get_pool() -> asyncpg.Pool:
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(
+            host=settings.pg_host,
+            port=settings.pg_port,
+            database=settings.pg_database,
+            user=settings.pg_user,
+            password=settings.pg_password,
+            min_size=1,
+            max_size=2,
+        )
+    return _pool
 
 # 初始化告警服务
 dingtalk_service = DingTalkService()
@@ -65,20 +84,23 @@ async def process_lead_task(task_data: dict):
     elif agent_name == "longtail_nurture_agent":
         agent = LongTailNurtureAgent()
         # LongTail agent 是同步的
-        agent.execute(lead.dict())
+        agent.execute(lead.model_dump())
         lead.assigned_agent = "longtail_nurture_agent"
         lead.status = "nurturing"
     else:
         # 未知 agent，记录日志
         logger.warning(f"Unknown or unimplemented agent: {agent_name}")
 
-    # Save updated lead back to Redis
-    lead_key = f"lead:{lead.id}"
-    redis_client.hset(lead_key, mapping={
-        "status": lead.status,
-        "assigned_agent": lead.assigned_agent or "",
-    })
-    logger.info(f"[Worker] Lead {lead.id} updated in Redis: status={lead.status}, agent={lead.assigned_agent}")
+    # Save updated lead back to PostgreSQL
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE leads SET status=$1, assigned_agent=$2, updated_at=NOW() WHERE id=$3",
+                lead.status, lead.assigned_agent or "", lead.id)
+        logger.info(f"[Worker] Lead {lead.id} updated in PostgreSQL: status={lead.status}, agent={lead.assigned_agent}")
+    except Exception as e:
+        logger.error(f"[Worker] Failed to update lead {lead.id} in PostgreSQL: {e}")
 
     logger.info(f"Lead {lead.id} processed.")
 
@@ -87,110 +109,54 @@ async def process_lead_task(task_data: dict):
 
 
 async def check_consistency() -> dict:
-    """检查前后端统计一致性"""
-    issues = []
-    
+    """从 PostgreSQL 检查数据一致性"""
     try:
-        # 1. 从 Redis 原始数据计算真实统计
-        lead_ids = redis_client.smembers("lead:index")
-        real_total = 0
-        real_by_score = {"high": 0, "medium": 0, "low": 0}
-        real_by_agent = {"high_intent_agent": 0, "normal_nurture_agent": 0, "longtail_nurture_agent": 0}
-        
-        for lead_id in lead_ids:
-            data = redis_client.hgetall(f"lead:{lead_id}")
-            if not data:
-                issues.append(f"索引 {lead_id} 无对应数据")
-                continue
-            real_total += 1
-            
-            score = int(data.get("intent_score", 0))
-            if score >= 100:
-                real_by_score["high"] += 1
-            elif score >= 62:
-                real_by_score["medium"] += 1
-            else:
-                real_by_score["low"] += 1
-            
-            agent = data.get("assigned_agent", "")
-            if agent in real_by_agent:
-                real_by_agent[agent] += 1
-        
-        # 2. 获取 /stats 接口统计
-        api_stats = get_stats()
-        
-        # 3. 对比
-        if real_total != api_stats["total"]:
-            issues.append(f"总数不一致：Redis={real_total}, API={api_stats['total']}")
-        
-        if real_by_score["high"] != api_stats["by_intent"]["high (100+)"]:
-            issues.append(f"高意向计数不一致：Redis={real_by_score['high']}, API={api_stats['by_intent']['high (100+)']}")
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            total = await conn.fetchval("SELECT COUNT(*) FROM leads")
+            high = await conn.fetchval("SELECT COUNT(*) FROM leads WHERE intent_score >= 100")
+            medium = await conn.fetchval("SELECT COUNT(*) FROM leads WHERE intent_score >= 62 AND intent_score < 100")
+            low = await conn.fetchval("SELECT COUNT(*) FROM leads WHERE intent_score < 62")
+            rows = await conn.fetch("SELECT assigned_agent, COUNT(*) AS cnt FROM leads GROUP BY assigned_agent")
 
-        if real_by_score["medium"] != api_stats["by_intent"]["medium (62-99)"]:
-            issues.append(f"中意向计数不一致：Redis={real_by_score['medium']}, API={api_stats['by_intent']['medium (62-99)']}")
+        by_agent = {r["assigned_agent"]: r["cnt"] for r in rows}
+        api_stats = await get_stats()
 
-        if real_by_score["low"] != api_stats["by_intent"]["low (<62)"]:
-            issues.append(f"低意向计数不一致：Redis={real_by_score['low']}, API={api_stats['by_intent']['low (<62)']}")
-        
-        return {
-            "success": len(issues) == 0,
-            "issues": issues,
-            "real_stats": {
-                "total": real_total,
-                "by_score": real_by_score,
-                "by_agent": real_by_agent
-            },
-            "api_stats": api_stats
-        }
+        issues = []
+        if total != api_stats["total"]:
+            issues.append(f"总数不一致：PG={total}, API={api_stats['total']}")
+        if high != api_stats["by_intent"]["high (100+)"]:
+            issues.append(f"高意向不一致：PG={high}, API={api_stats['by_intent']['high (100+)']}")
+        if medium != api_stats["by_intent"]["medium (62-99)"]:
+            issues.append(f"中意向不一致：PG={medium}, API={api_stats['by_intent']['medium (62-99)']}")
+        if low != api_stats["by_intent"]["low (<62)"]:
+            issues.append(f"低意向不一致：PG={low}, API={api_stats['by_intent']['low (<62)']}")
+
+        return {"success": len(issues) == 0, "issues": issues}
     except Exception as e:
         logger.exception("检查一致性失败")
         return {"success": False, "issues": [f"检查异常: {str(e)}"]}
 
 
 async def check_data_integrity() -> dict:
-    """检查数据完整性"""
+    """从 PostgreSQL 检查数据完整性"""
     issues = []
-    valid_leads = 0
-    
     try:
-        lead_ids = redis_client.smembers("lead:index")
-        
-        for lead_id in lead_ids:
-            lead_key = f"lead:{lead_id}"
-            data = redis_client.hgetall(lead_key)
-            
-            if not data:
-                issues.append(f"线索 {lead_id} 数据缺失")
-                continue
-            
-            valid_leads += 1
-            
-            # 检查必填字段
-            required_fields = ["id", "source", "status", "assigned_agent"]
-            for field in required_fields:
-                if not data.get(field):
-                    issues.append(f"线索 {lead_id} 缺少字段 {field}")
-            
-            # 检查 intent_score 与 assigned_agent 是否匹配
-            try:
-                score = int(data.get("intent_score", 0))
-                agent = data.get("assigned_agent", "")
-                
-                if score >= 100 and agent != "high_intent_agent":
-                    issues.append(f"线索 {lead_id} 分数{score}≥100但agent={agent}")
-                elif 62 <= score < 100 and agent != "normal_nurture_agent":
-                    issues.append(f"线索 {lead_id} 分数{score}在62-99但agent={agent}")
-                elif score < 62 and agent != "longtail_nurture_agent":
-                    issues.append(f"线索 {lead_id} 分数{score}<62但agent={agent}")
-            except ValueError:
-                issues.append(f"线索 {lead_id} intent_score 格式错误")
-        
-        return {
-            "success": len(issues) == 0,
-            "issues": issues,
-            "valid_leads": valid_leads,
-            "total_index": len(lead_ids)
-        }
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT id, intent_score, assigned_agent FROM leads")
+
+        for row in rows:
+            score = row["intent_score"]
+            agent = row["assigned_agent"]
+            if score >= 100 and agent != "high_intent_agent":
+                issues.append(f"线索 {row['id'][:8]} 分数{score}≥100但agent={agent}")
+            elif 62 <= score < 100 and agent != "normal_nurture_agent":
+                issues.append(f"线索 {row['id'][:8]} 分数{score}在62-99但agent={agent}")
+            elif score < 62 and agent != "longtail_nurture_agent":
+                issues.append(f"线索 {row['id'][:8]} 分数{score}<62但agent={agent}")
+
+        return {"success": len(issues) == 0, "issues": issues, "total": len(rows)}
     except Exception as e:
         logger.exception("检查数据完整性失败")
         return {"success": False, "issues": [f"检查异常: {str(e)}"]}
